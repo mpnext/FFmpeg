@@ -82,7 +82,9 @@
 
 typedef struct UDPContext {
     const AVClass *class;
+    int flipflop;
     int udp_fd;
+    int udp_fd2;
     int ttl;
     int udplite_coverage;
     int buffer_size;
@@ -90,10 +92,13 @@ typedef struct UDPContext {
     int is_multicast;
     int is_broadcast;
     int local_port;
+    int local_port2;
     int reuse_socket;
     int overrun_nonfatal;
     struct sockaddr_storage dest_addr;
+    struct sockaddr_storage dest_addr2;
     int dest_addr_len;
+    int dest_addr_len2;
     int is_connected;
 
     /* Circular Buffer variables for use in UDP receive code */
@@ -112,6 +117,7 @@ typedef struct UDPContext {
     uint8_t tmp[UDP_MAX_PKT_SIZE+4];
     int remaining_in_dg;
     char *localaddr;
+    char *localaddr2;
     int timeout;
     struct sockaddr_storage local_addr_storage;
     char *sources;
@@ -335,7 +341,7 @@ static int udp_socket_create(URLContext *h, struct sockaddr_storage *addr,
                              socklen_t *addr_len, const char *localaddr)
 {
     UDPContext *s = h->priv_data;
-    int udp_fd = -1;
+    int udp_fd = -1, udp_fd2 = -1;
     struct addrinfo *res0, *res;
     int family = AF_UNSPEC;
 
@@ -349,8 +355,9 @@ static int udp_socket_create(URLContext *h, struct sockaddr_storage *addr,
     for (res = res0; res; res=res->ai_next) {
         if (s->udplite_coverage)
             udp_fd = ff_socket(res->ai_family, SOCK_DGRAM, IPPROTO_UDPLITE);
-        else
+        else {
             udp_fd = ff_socket(res->ai_family, SOCK_DGRAM, 0);
+        }
         if (udp_fd != -1) break;
         ff_log_net_error(NULL, AV_LOG_ERROR, "socket");
     }
@@ -414,6 +421,7 @@ int ff_udp_set_remote_url(URLContext *h, const char *uri)
 
     /* set the destination address */
     s->dest_addr_len = udp_set_url(h, &s->dest_addr, hostname, port);
+    s->dest_addr_len = udp_set_url(h, &s->dest_addr2, hostname, port + 1000);
     if (s->dest_addr_len < 0) {
         return AVERROR(EIO);
     }
@@ -484,8 +492,10 @@ static void *circular_buffer_task_rx( void *_URLContext)
            in Single Unix. */
         pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, &old_cancelstate);
         len = recvfrom(s->udp_fd, s->tmp+4, sizeof(s->tmp)-4, 0, (struct sockaddr *)&addr, &addr_len);
+        len = recvfrom(s->udp_fd2, s->tmp+4, sizeof(s->tmp)-4, 0, (struct sockaddr *)&addr, &addr_len);
         pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &old_cancelstate);
         pthread_mutex_lock(&s->mutex);
+
         if (len < 0) {
             if (ff_neterrno() != AVERROR(EAGAIN) && ff_neterrno() != AVERROR(EINTR)) {
                 s->circular_buffer_error = ff_neterrno();
@@ -530,6 +540,12 @@ static void *circular_buffer_task_tx( void *_URLContext)
     int64_t sent_bits = 0;
     int64_t burst_interval = s->bitrate ? (s->burst_bits * 1000000 / s->bitrate) : 0;
     int64_t max_delay = s->bitrate ?  ((int64_t)h->max_packet_size * 8 * 1000000 / s->bitrate + 1) : 0;
+
+    if (s->flipflop == 0) {
+    	s->flipflop = 1;
+    } else {
+    	s->flipflop = 0;
+    }
 
     pthread_mutex_lock(&s->mutex);
 
@@ -591,9 +607,18 @@ static void *circular_buffer_task_tx( void *_URLContext)
             int ret;
             av_assert0(len > 0);
             if (!s->is_connected) {
-                ret = sendto (s->udp_fd, p, len, 0,
-                            (struct sockaddr *) &s->dest_addr,
-                            s->dest_addr_len);
+            	if (s->flipflop == 0) {
+            		printf("path1=====================\n");
+					ret = sendto (s->udp_fd, p, len, 0,
+								(struct sockaddr *) &s->dest_addr,
+								s->dest_addr_len);
+            	} else {
+            		printf("path2=====================\n");
+            		ret = sendto (s->udp_fd2, p, len, 0,
+            									(struct sockaddr *) &s->dest_addr2,
+            									s->dest_addr_len2);
+            	}
+
             } else
                 ret = send(s->udp_fd, p, len, 0);
             if (ret >= 0) {
@@ -625,14 +650,15 @@ end:
 /* return non zero if error */
 static int udp_open(URLContext *h, const char *uri, int flags)
 {
-    char hostname[1024], localaddr[1024] = "";
-    int port, udp_fd = -1, tmp, bind_ret = -1, dscp = -1;
+    char hostname[1024], localaddr[1024] = "", localaddr2[1024] = "";
+    int port, port2, udp_fd = -1, udp_fd2 = -1, tmp, bind_ret = -1, dscp = -1;
     UDPContext *s = h->priv_data;
     int is_output;
     const char *p;
     char buf[256];
     struct sockaddr_storage my_addr;
-    socklen_t len;
+    struct sockaddr_storage my_addr2;
+    socklen_t len,len2;
 
     h->is_streamed = 1;
 
@@ -681,6 +707,7 @@ static int udp_open(URLContext *h, const char *uri, int flags)
         }
         if (av_find_info_tag(buf, sizeof(buf), "localport", p)) {
             s->local_port = strtol(buf, NULL, 10);
+            s->local_port2 = s->local_port + 1000;
         }
         if (av_find_info_tag(buf, sizeof(buf), "pkt_size", p)) {
             s->pkt_size = strtol(buf, NULL, 10);
@@ -749,14 +776,23 @@ static int udp_open(URLContext *h, const char *uri, int flags)
             goto fail;
     }
 
-    if ((s->is_multicast || s->local_port <= 0) && (h->flags & AVIO_FLAG_READ))
+    if ((s->is_multicast || s->local_port <= 0) && (h->flags & AVIO_FLAG_READ)) {
         s->local_port = port;
+    	s->local_port2 = port +1000;
+    }
 
     if (localaddr[0])
         udp_fd = udp_socket_create(h, &my_addr, &len, localaddr);
     else
         udp_fd = udp_socket_create(h, &my_addr, &len, s->localaddr);
     if (udp_fd < 0)
+        goto fail;
+
+    if (localaddr[0])
+        udp_fd2 = udp_socket_create(h, &my_addr2, &len, localaddr);
+    else
+        udp_fd2 = udp_socket_create(h, &my_addr2, &len, s->localaddr);
+    if (udp_fd2 < 0)
         goto fail;
 
     s->local_addr_storage=my_addr; //store for future multicast join
@@ -793,6 +829,7 @@ static int udp_open(URLContext *h, const char *uri, int flags)
         dscp <<= 2;
         if (setsockopt (udp_fd, IPPROTO_IP, IP_TOS, &dscp, sizeof(dscp)) != 0)
             goto fail;
+
     }
 
     /* If multicast, try binding the multicast address first, to avoid
@@ -809,10 +846,18 @@ static int udp_open(URLContext *h, const char *uri, int flags)
         ff_log_net_error(h, AV_LOG_ERROR, "bind failed");
         goto fail;
     }
+    udp_set_url(h,(struct sockaddr *)&my_addr2, hostname, s->local_port2);
+    if (bind_ret < 0 && bind(udp_fd2,(struct sockaddr *)&my_addr2, len) < 0) {
+		ff_log_net_error(h, AV_LOG_ERROR, "bind path 2 failed");
+		goto fail;
+	}
 
     len = sizeof(my_addr);
+    len2 = sizeof(my_addr2);
     getsockname(udp_fd, (struct sockaddr *)&my_addr, &len);
+    getsockname(udp_fd2, (struct sockaddr *)&my_addr2, &len2);
     s->local_port = udp_port(&my_addr, len);
+    s->local_port2 = udp_port(&my_addr2, len2);
 
     if (s->is_multicast) {
         if (h->flags & AVIO_FLAG_WRITE) {
@@ -877,6 +922,8 @@ static int udp_open(URLContext *h, const char *uri, int flags)
     }
 
     s->udp_fd = udp_fd;
+    s->udp_fd2 = udp_fd2;
+
 
 #if HAVE_PTHREAD_CANCEL
     /*
@@ -996,6 +1043,7 @@ static int udp_read(URLContext *h, uint8_t *buf, int size)
         if (ret < 0)
             return ret;
     }
+    printf("UDP_READ used.=================================\n");
     ret = recvfrom(s->udp_fd, buf, size, 0, (struct sockaddr *)&addr, &addr_len);
     if (ret < 0)
         return ff_neterrno();
@@ -1008,6 +1056,8 @@ static int udp_write(URLContext *h, const uint8_t *buf, int size)
 {
     UDPContext *s = h->priv_data;
     int ret;
+
+    //printf("udp_write======================================\n");
 
 #if HAVE_PTHREAD_CANCEL
     if (s->fifo) {
@@ -1043,11 +1093,35 @@ static int udp_write(URLContext *h, const uint8_t *buf, int size)
         if (ret < 0)
             return ret;
     }
-
+    if (s->flipflop == 0) {
+    	s->flipflop = 1;
+    } else {
+    	s->flipflop = 0;
+    }
     if (!s->is_connected) {
-        ret = sendto (s->udp_fd, buf, size, 0,
-                      (struct sockaddr *) &s->dest_addr,
-                      s->dest_addr_len);
+
+    	ret = sendto (s->udp_fd, buf, size, 0,
+    							  (struct sockaddr *) &s->dest_addr,
+    							  s->dest_addr_len);
+    	udp_set_url(h,&s->dest_addr2,"127.0.0.1",9000);
+
+		ret = sendto (s->udp_fd2, buf, size, 0,
+								  &s->dest_addr2,
+								  sizeof(s->dest_addr2));
+/*
+
+    	if (s->flipflop == 0) {
+			ret = sendto (s->udp_fd, buf, size, 0,
+						  (struct sockaddr *) &s->dest_addr,
+						  s->dest_addr_len);
+    	} else {
+    		udp_set_url(h,&s->dest_addr2,"127.0.0.1",9000);
+    		ret = sendto (s->udp_fd2, buf, size, 0,
+    								  &s->dest_addr2,
+    								  sizeof(s->dest_addr2));
+    	}
+*/
+
     } else
         ret = send(s->udp_fd, buf, size, 0);
 
