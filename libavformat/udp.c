@@ -535,12 +535,36 @@ static void *circular_buffer_task_rx( void *_URLContext)
 		} else {
 			s->flipflop = 1;
 		}
-        ++s->pkt_count;
-        //if (s->flipflop == 0) {
+        //++s->pkt_count;
+        if (s->flipflop == 0) {
         	av_fifo_generic_write(s->fifo, s->tmp, len+4, NULL);
-        //} else {
-        //	av_fifo_generic_write(s->fifo, s->tmp2, len+4, NULL);
-        //}
+        } else {
+        	av_fifo_generic_write(s->fifo, s->tmp2, len2+4, NULL);
+        }
+        // tuning the RCVBUF
+        /*
+        int tmp = 0;
+        int tmp1 = 20000;
+        int tmp2 = 20000000;
+        if (s->pkt_count*s->pkt_size % 10000000 == 0) {
+        	if (tmp == tmp1) {
+        		tmp = tmp1;
+        	} else {
+        		tmp = tmp2;
+        	}
+			if (setsockopt(s->udp_fd, SOL_SOCKET, SO_RCVBUF, &tmp, sizeof(tmp)) < 0) {
+				ff_log_net_error(h, AV_LOG_WARNING, "setsockopt(SO_RECVBUF)");
+			}
+			len = sizeof(tmp);
+			if (getsockopt(s->udp_fd, SOL_SOCKET, SO_RCVBUF, &tmp, &len) < 0) {
+				ff_log_net_error(h, AV_LOG_WARNING, "getsockopt(SO_RCVBUF)");
+			} else {
+				av_log(h, AV_LOG_DEBUG, "end receive buffer size reported is %d\n", tmp);
+				if(tmp < s->buffer_size)
+					av_log(h, AV_LOG_WARNING, "attempted to set receive buffer to size %d but it only ended up set as %d\n", s->buffer_size, tmp);
+			}
+        }
+        */
         pthread_cond_signal(&s->cond);
     }
 
