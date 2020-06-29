@@ -83,6 +83,7 @@
 typedef struct UDPContext {
     const AVClass *class;
     int flipflop;
+    int pkt_count;
     int udp_fd;
     int udp_fd2;
     int ttl;
@@ -115,6 +116,7 @@ typedef struct UDPContext {
     int thread_started;
 #endif
     uint8_t tmp[UDP_MAX_PKT_SIZE+4];
+    uint8_t tmp2[UDP_MAX_PKT_SIZE+4];
     int remaining_in_dg;
     char *localaddr;
     char *localaddr2;
@@ -341,7 +343,7 @@ static int udp_socket_create(URLContext *h, struct sockaddr_storage *addr,
                              socklen_t *addr_len, const char *localaddr)
 {
     UDPContext *s = h->priv_data;
-    int udp_fd = -1, udp_fd2 = -1;
+    int udp_fd = -1;
     struct addrinfo *res0, *res;
     int family = AF_UNSPEC;
 
@@ -483,8 +485,11 @@ static void *circular_buffer_task_rx( void *_URLContext)
     }
     while(1) {
         int len;
+        int len2;
         struct sockaddr_storage addr;
         socklen_t addr_len = sizeof(addr);
+        struct sockaddr_storage addr2;
+        socklen_t addr_len2 = sizeof(addr2);
 
         pthread_mutex_unlock(&s->mutex);
         /* Blocking operations are always cancellation points;
@@ -492,9 +497,11 @@ static void *circular_buffer_task_rx( void *_URLContext)
            in Single Unix. */
         pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, &old_cancelstate);
         len = recvfrom(s->udp_fd, s->tmp+4, sizeof(s->tmp)-4, 0, (struct sockaddr *)&addr, &addr_len);
-        len = recvfrom(s->udp_fd2, s->tmp+4, sizeof(s->tmp)-4, 0, (struct sockaddr *)&addr, &addr_len);
+        len2 = recvfrom(s->udp_fd2, s->tmp2+4, sizeof(s->tmp)-4, 0, (struct sockaddr *)&addr2, &addr_len2);
         pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &old_cancelstate);
         pthread_mutex_lock(&s->mutex);
+
+        printf("===%d,%d===\n",len,len2);
 
         if (len < 0) {
             if (ff_neterrno() != AVERROR(EAGAIN) && ff_neterrno() != AVERROR(EINTR)) {
@@ -506,6 +513,7 @@ static void *circular_buffer_task_rx( void *_URLContext)
         if (ff_ip_check_source_lists(&addr, &s->filters))
             continue;
         AV_WL32(s->tmp, len);
+        AV_WL32(s->tmp2, len2);
 
         if(av_fifo_space(s->fifo) < len + 4) {
             /* No Space left */
@@ -521,7 +529,18 @@ static void *circular_buffer_task_rx( void *_URLContext)
                 goto end;
             }
         }
-        av_fifo_generic_write(s->fifo, s->tmp, len+4, NULL);
+
+		if (s->flipflop == 1) {
+			s->flipflop = 0;
+		} else {
+			s->flipflop = 1;
+		}
+        ++s->pkt_count;
+        //if (s->flipflop == 0) {
+        	av_fifo_generic_write(s->fifo, s->tmp, len+4, NULL);
+        //} else {
+        //	av_fifo_generic_write(s->fifo, s->tmp2, len+4, NULL);
+        //}
         pthread_cond_signal(&s->cond);
     }
 
@@ -651,8 +670,9 @@ end:
 static int udp_open(URLContext *h, const char *uri, int flags)
 {
     char hostname[1024], localaddr[1024] = "", localaddr2[1024] = "";
-    int port, port2, udp_fd = -1, udp_fd2 = -1, tmp, bind_ret = -1, dscp = -1;
+    int port, udp_fd = -1, udp_fd2 = -1, tmp, bind_ret = -1, dscp = -1;
     UDPContext *s = h->priv_data;
+    s->pkt_count = 0;
     int is_output;
     const char *p;
     char buf[256];
@@ -846,7 +866,7 @@ static int udp_open(URLContext *h, const char *uri, int flags)
         ff_log_net_error(h, AV_LOG_ERROR, "bind failed");
         goto fail;
     }
-    udp_set_url(h,(struct sockaddr *)&my_addr2, hostname, s->local_port2);
+    udp_set_url(h, &my_addr2, hostname, s->local_port2);
     if (bind_ret < 0 && bind(udp_fd2,(struct sockaddr *)&my_addr2, len) < 0) {
 		ff_log_net_error(h, AV_LOG_ERROR, "bind path 2 failed");
 		goto fail;
@@ -898,7 +918,8 @@ static int udp_open(URLContext *h, const char *uri, int flags)
         }
     } else {
         /* set udp recv buffer size to the requested value (default 64K) */
-        tmp = s->buffer_size;
+        //tmp = s->buffer_size;
+        tmp = 20000;
         if (setsockopt(udp_fd, SOL_SOCKET, SO_RCVBUF, &tmp, sizeof(tmp)) < 0) {
             ff_log_net_error(h, AV_LOG_WARNING, "setsockopt(SO_RECVBUF)");
         }
@@ -1100,27 +1121,15 @@ static int udp_write(URLContext *h, const uint8_t *buf, int size)
     }
     if (!s->is_connected) {
 
-    	ret = sendto (s->udp_fd, buf, size, 0,
-    							  (struct sockaddr *) &s->dest_addr,
-    							  s->dest_addr_len);
-    	udp_set_url(h,&s->dest_addr2,"127.0.0.1",9000);
-
-		ret = sendto (s->udp_fd2, buf, size, 0,
-								  &s->dest_addr2,
-								  sizeof(s->dest_addr2));
-/*
-
-    	if (s->flipflop == 0) {
 			ret = sendto (s->udp_fd, buf, size, 0,
-						  (struct sockaddr *) &s->dest_addr,
-						  s->dest_addr_len);
-    	} else {
-    		udp_set_url(h,&s->dest_addr2,"127.0.0.1",9000);
-    		ret = sendto (s->udp_fd2, buf, size, 0,
-    								  &s->dest_addr2,
-    								  sizeof(s->dest_addr2));
-    	}
-*/
+									  (struct sockaddr *) &s->dest_addr,
+									  s->dest_addr_len);
+
+			udp_set_url(h,&s->dest_addr2,"127.0.0.1",9000);
+
+			ret = sendto (s->udp_fd2, buf, size, 0,
+									  (struct sockaddr *)&s->dest_addr2,
+									  sizeof(s->dest_addr2));
 
     } else
         ret = send(s->udp_fd, buf, size, 0);
