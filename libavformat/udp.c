@@ -470,6 +470,22 @@ static int udp_get_file_handle(URLContext *h)
 }
 
 #if HAVE_PTHREAD_CANCEL
+
+static int isStartOfFrame(void* buf) {
+	char *tbuf = (char*)buf;
+	//printf("================%x,%x,%x,%x================",tbuf[0],tbuf[1],tbuf[2],tbuf[3]);
+	if (tbuf[0] == 0 && tbuf[1] == 0 && tbuf[2] == 1){
+		//printf("========================================\n====================================\n");
+		return 1;
+	}
+	if (tbuf[0] == 0 && tbuf[1] == 0 && tbuf[2] == 0 && tbuf[3] == 1){
+		//printf("========================================\n====================================\n");
+		return 1;
+	}
+
+	return 0;
+}
+
 static void *circular_buffer_task_rx( void *_URLContext)
 {
     URLContext *h = _URLContext;
@@ -501,7 +517,7 @@ static void *circular_buffer_task_rx( void *_URLContext)
         pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &old_cancelstate);
         pthread_mutex_lock(&s->mutex);
 
-        printf("===%d,%d===\n",len,len2);
+        //printf("===%d,%d===\n",len,len2);
 
         if (len < 0) {
             if (ff_neterrno() != AVERROR(EAGAIN) && ff_neterrno() != AVERROR(EINTR)) {
@@ -530,11 +546,51 @@ static void *circular_buffer_task_rx( void *_URLContext)
             }
         }
 
-		if (s->flipflop == 1) {
-			s->flipflop = 0;
-		} else {
-			s->flipflop = 1;
+        //only flip at the edge of Frame
+        /*
+        if (isStartOfFrame(s->tmp+4)) {
+        	if (s->flipflop == 1) {
+        		s->flipflop = 0;
+        		printf("switch to path A. Frame code:%x,%x,%x,%x\n",s->tmp2[4],s->tmp2[5],s->tmp2[6],s->tmp2[7]);
+        	} else if (s->flipflop == 0){
+        		if (isStartOfFrame(s->tmp2+4)) {
+        			s->flipflop = 1;
+        			printf("switch to path B. Frame code:%x,%x,%x,%x\n",s->tmp[4],s->tmp[5],s->tmp[6],s->tmp[7]);
+        		}
+        	}
+        }
+        */
+
+        //as soon as the other path start a new frame, switch to that path
+        /*too much flucuation, too high frequency
+        if (s->flipflop == 0) {
+			if (isStartOfFrame(s->tmp2+4)) {
+				s->flipflop = 1;
+				printf("switch to path B. Frame code:%x,%x,%x,%x\n",s->tmp[4],s->tmp[5],s->tmp[6],s->tmp[7]);
+			}
+		} else if (s->flipflop == 1) {
+			if (isStartOfFrame(s->tmp+4)) {
+				s->flipflop = 0;
+				printf("switch to path A. Frame code:%x,%x,%x,%x\n",s->tmp2[4],s->tmp2[5],s->tmp2[6],s->tmp2[7]);
+			}
 		}
+		*/
+
+        //as soon as the other path start a new key frame, switch to that path
+
+		if (s->flipflop == 0) {
+			if (isStartOfFrame(s->tmp2+4) && s->tmp2[8] == 65) {
+				s->flipflop = 1;
+				printf("switch to path B. Frame code:%x,%x,%x,%x\n",s->tmp2[4],s->tmp2[5],s->tmp2[6],s->tmp2[7]);
+			}
+		} else if (s->flipflop == 1) {
+			if (isStartOfFrame(s->tmp+4) && s->tmp[8] == 65) {
+				s->flipflop = 0;
+				printf("switch to path A. Frame code:%x,%x,%x,%x\n",s->tmp[4],s->tmp[5],s->tmp[6],s->tmp[7]);
+			}
+		}
+
+
         //++s->pkt_count;
         if (s->flipflop == 0) {
         	av_fifo_generic_write(s->fifo, s->tmp, len+4, NULL);
@@ -943,7 +999,7 @@ static int udp_open(URLContext *h, const char *uri, int flags)
     } else {
         /* set udp recv buffer size to the requested value (default 64K) */
         //tmp = s->buffer_size;
-        tmp = 20000;
+        tmp = 2000000;
         if (setsockopt(udp_fd, SOL_SOCKET, SO_RCVBUF, &tmp, sizeof(tmp)) < 0) {
             ff_log_net_error(h, AV_LOG_WARNING, "setsockopt(SO_RECVBUF)");
         }
@@ -1144,7 +1200,8 @@ static int udp_write(URLContext *h, const uint8_t *buf, int size)
     	s->flipflop = 0;
     }
     if (!s->is_connected) {
-
+   	        //int nal_type = buf[4] & 31;
+    		printf("%x,%x,%x,%x,%x,%x\n",buf[0],buf[1],buf[2],buf[3],buf[4],buf[5]);
 			ret = sendto (s->udp_fd, buf, size, 0,
 									  (struct sockaddr *) &s->dest_addr,
 									  s->dest_addr_len);
