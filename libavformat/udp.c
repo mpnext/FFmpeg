@@ -136,6 +136,11 @@ typedef struct UDPContext {
     IPSourceFilters filters;
 } UDPContext;
 
+struct recv_thread_args {
+    URLContext *h;
+    int path_num;
+};
+
 #define OFFSET(x) offsetof(UDPContext, x)
 #define D AV_OPT_FLAG_DECODING_PARAM
 #define E AV_OPT_FLAG_ENCODING_PARAM
@@ -480,8 +485,10 @@ static int udp_get_file_handle(URLContext *h)
 
 #if HAVE_PTHREAD_CANCEL
 
-static void *udp_consumer(void *_URLContext){
-    URLContext *h = _URLContext;
+static void *udp_consumer(void *recv_thread_args){
+    struct recv_thread_args *args = recv_thread_args;
+    URLContext *h = args->h;
+    int path_id = args->path_num;
     UDPContext *s = h->priv_data;
     int old_cancelstate;
 
@@ -490,25 +497,27 @@ static void *udp_consumer(void *_URLContext){
 
     while(1) {
         int len;
-        int len2;
         struct sockaddr_storage addr;
         socklen_t addr_len = sizeof(addr);
-        struct sockaddr_storage addr2;
-        socklen_t addr_len2 = sizeof(addr2);
-
         pthread_mutex_unlock(&s->rb_mutex);
         /* Blocking operations are always cancellation points;
            see "General Information" / "Thread Cancelation Overview"
            in Single Unix. */
         pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, &old_cancelstate);
-        len = recvfrom(s->udp_fd, s->raw_tmp1, sizeof(s->raw_tmp1), 0, (struct sockaddr *)&addr, &addr_len);
-        len2 = recvfrom(s->udp_fd2, s->raw_tmp2, sizeof(s->raw_tmp2), 0, (struct sockaddr *)&addr2, &addr_len2);
+        if(path_id == 1){
+            len = recvfrom(s->udp_fd, s->raw_tmp1, sizeof(s->raw_tmp1), 0, (struct sockaddr *)&addr, &addr_len);
+        }else if(path_id == 2){
+            len = recvfrom(s->udp_fd2, s->raw_tmp2, sizeof(s->raw_tmp2), 0, (struct sockaddr *)&addr, &addr_len);
+        }else{
+            printf("Wrong path. failed");
+            goto end;
+        }
         pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &old_cancelstate);
         pthread_mutex_lock(&s->rb_mutex);
 
-        printf("===%d,%d===\n",len,len2);
+        printf("===%d===\n",len);
 
-        if (len < 0 || len2 < 0) {
+        if (len < 0) {
             if (ff_neterrno() != AVERROR(EAGAIN) && ff_neterrno() != AVERROR(EINTR)) {
                 s->recv_buffer_error = ff_neterrno();
                 goto end;
@@ -525,41 +534,27 @@ static void *udp_consumer(void *_URLContext){
 			s->flipflop = 1;
 		}
 		*/
-        s->flipflop = 0;
+        // s->flipflop = 0;
 
         //++s->pkt_count;
-        if (s->flipflop == 0) {
-            if(av_fifo_space(s->recv_buffer) < len) { // not +4
+        if(av_fifo_space(s->recv_buffer) < len) {
             /* No Space left */
-                if (s->overrun_nonfatal) {
-                    av_log(h, AV_LOG_WARNING, "Receive buffer overrun. "
-                            "Surviving due to overrun_nonfatal option\n");
-                    continue;
-                } else {
-                    av_log(h, AV_LOG_ERROR, "Receive buffer overrun. "
-                            "To avoid, increase fifo_size URL option. "
-                            "To survive in such case, use overrun_nonfatal option\n");
-                    s->recv_buffer_error = AVERROR(EIO);
-                    goto end;
-                }
+            if (s->overrun_nonfatal) {
+                av_log(h, AV_LOG_WARNING, "Receive buffer overrun. "
+                        "Surviving due to overrun_nonfatal option\n");
+                continue;
+            } else {
+                av_log(h, AV_LOG_ERROR, "Receive buffer overrun. "
+                        "To avoid, increase fifo_size URL option. "
+                        "To survive in such case, use overrun_nonfatal option\n");
+                s->recv_buffer_error = AVERROR(EIO);
+                goto end;
             }
+        }
+        if (path_id == 1) {
             av_fifo_generic_write(s->recv_buffer, s->raw_tmp1, len, NULL);
-        } else {
-            if(av_fifo_space(s->recv_buffer) < len2) {
-            /* No Space left */
-                if (s->overrun_nonfatal) {
-                    av_log(h, AV_LOG_WARNING, "Receive buffer overrun. "
-                            "Surviving due to overrun_nonfatal option\n");
-                    continue;
-                } else {
-                    av_log(h, AV_LOG_ERROR, "Receive buffer overrun. "
-                            "To avoid, increase fifo_size URL option. "
-                            "To survive in such case, use overrun_nonfatal option\n");
-                    s->recv_buffer_error = AVERROR(EIO);
-                    goto end;
-                }
-            }
-            av_fifo_generic_write(s->recv_buffer, s->raw_tmp2, len2, NULL);
+        } else if (path_id == 2) {
+            av_fifo_generic_write(s->recv_buffer, s->raw_tmp2, len, NULL);
         }
         pthread_cond_signal(&s->rb_cond);
     }
@@ -599,21 +594,13 @@ static void *circular_buffer_task_rx( void *_URLContext)
         goto end;
     }
     while(1) {
-        int len;
-        int len2;
         int read_step = 1000;
-        struct sockaddr_storage addr;
-        socklen_t addr_len = sizeof(addr);
-        struct sockaddr_storage addr2;
-        socklen_t addr_len2 = sizeof(addr2);
 
         pthread_mutex_unlock(&s->mutex);
         /* Blocking operations are always cancellation points;
            see "General Information" / "Thread Cancelation Overview"
            in Single Unix. */
         pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, &old_cancelstate);
-        //len = recvfrom(s->udp_fd, s->tmp+4, sizeof(s->tmp)-4, 0, (struct sockaddr *)&addr, &addr_len);
-        //len2 = recvfrom(s->udp_fd2, s->tmp2+4, sizeof(s->tmp)-4, 0, (struct sockaddr *)&addr2, &addr_len2);
         while (av_fifo_size(s->recv_buffer) < read_step) {
         	//printf("%d\n",av_fifo_size(s->recv_buffer));
         }
@@ -624,17 +611,6 @@ static void *circular_buffer_task_rx( void *_URLContext)
 
         //printf("===%d,%d===\n",len,len2);
 
-        if (len < 0) {
-            if (ff_neterrno() != AVERROR(EAGAIN) && ff_neterrno() != AVERROR(EINTR)) {
-                s->circular_buffer_error = ff_neterrno();
-                goto end;
-            }
-            continue;
-        }
-        if (ff_ip_check_source_lists(&addr, &s->filters))
-            continue;
-        //AV_WL32(s->tmp, len);
-        //AV_WL32(s->tmp2, len2);
         AV_WL32(s->tmp, read_step);
 
         if(av_fifo_space(s->fifo) < read_step + 4) {
@@ -857,7 +833,7 @@ end:
 /* return non zero if error */
 static int udp_open(URLContext *h, const char *uri, int flags)
 {
-    char hostname[1024], localaddr[1024] = "", localaddr2[1024] = "";
+    char hostname[1024], localaddr[1024] = "";
     int port, udp_fd = -1, udp_fd2 = -1, tmp, bind_ret = -1, dscp = -1;
     UDPContext *s = h->priv_data;
     s->pkt_count = 0;
@@ -1160,24 +1136,30 @@ static int udp_open(URLContext *h, const char *uri, int flags)
 			printf("\nFailed to alloc new recv buffer of size %d.\n",s->recv_buffer_size);
 			exit(1);
 		}
+        int path_num;
+        int ret2;
+        ret2 = pthread_mutex_init(&s->rb_mutex, NULL);
+        if (ret2 != 0) {
+            av_log(h, AV_LOG_ERROR, "pthread_mutex_init failed : %s\n", strerror(ret2));
+            goto fail;
+        }
+        ret2 = pthread_cond_init(&s->rb_cond,NULL);
+        if(ret2 != 0) {
+            av_log(h,AV_LOG_ERROR, "pthread_cond_init rb failed %s\n", strerror(ret2));
+            goto cond_fail;
+        }
+        struct recv_thread_args *args;
+        args->h = h;
+        for(path_num = 1; path_num < 3; path_num++){
+            args->path_num = path_num;
+            ret2 = pthread_create(&s->recv_buffer_thread, NULL, udp_consumer, args);
+            if(ret2 != 0) {
+                av_log(h,AV_LOG_ERROR, "pthread_create rb failed %s\n", strerror(ret2));
+                goto thread_fail;
+            }
+        }
 
-		int ret2;
-		ret2 = pthread_mutex_init(&s->rb_mutex, NULL);
-		if (ret2 != 0) {
-		   av_log(h, AV_LOG_ERROR, "pthread_mutex_init failed : %s\n", strerror(ret2));
-		   goto fail;
-		}
-		ret2 = pthread_cond_init(&s->rb_cond,NULL);
-		if(ret2 != 0) {
-			av_log(h,AV_LOG_ERROR, "pthread_cond_init rb failed %s\n", strerror(ret2));
-			goto cond_fail;
-		}
-		ret2 = pthread_create(&s->recv_buffer_thread, NULL, udp_consumer, h);
-		if(ret2 != 0) {
-			av_log(h,AV_LOG_ERROR, "pthread_create rb failed %s\n", strerror(ret2));
-			goto thread_fail;
-		}
-		s->thread_started = 1;
+		
 
         ret = pthread_mutex_init(&s->mutex, NULL);
         if (ret != 0) {
@@ -1194,6 +1176,7 @@ static int udp_open(URLContext *h, const char *uri, int flags)
             av_log(h, AV_LOG_ERROR, "pthread_create failed : %s\n", strerror(ret));
             goto thread_fail;
         }
+        s->thread_started = 1;
 
     }
 #endif
@@ -1378,6 +1361,7 @@ static int udp_close(URLContext *h)
 #if HAVE_PTHREAD_CANCEL
     if (s->thread_started) {
         int ret;
+        int ret2;
         // Cancel only read, as write has been signaled as success to the user
         if (h->flags & AVIO_FLAG_READ) {
 #ifdef _WIN32
@@ -1388,13 +1372,19 @@ static int udp_close(URLContext *h)
             CancelIoEx((HANDLE)(SOCKET)s->udp_fd, NULL);
 #else
             pthread_cancel(s->circular_buffer_thread);
+            pthread_cancel(s->recv_buffer_thread);
 #endif
         }
         ret = pthread_join(s->circular_buffer_thread, NULL);
+        ret2 = pthread_join(s->recv_buffer_thread, NULL);
         if (ret != 0)
             av_log(h, AV_LOG_ERROR, "pthread_join(): %s\n", strerror(ret));
+        if (ret2 != 0)
+            av_log(h, AV_LOG_ERROR, "pthread_join(): %s\n", strerror(ret2));
         pthread_mutex_destroy(&s->mutex);
         pthread_cond_destroy(&s->cond);
+        pthread_mutex_destroy(&s->rb_mutex);
+        pthread_cond_destroy(&s->rb_cond);
     }
 #endif
     closesocket(s->udp_fd);
