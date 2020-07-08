@@ -518,11 +518,15 @@ static void *udp_consumer(void *_URLContext){
         if (ff_ip_check_source_lists(&addr, &s->filters))
             continue;
 
+        /*
 		if (s->flipflop == 1) {
 			s->flipflop = 0;
 		} else {
 			s->flipflop = 1;
 		}
+		*/
+        s->flipflop = 0;
+
         //++s->pkt_count;
         if (s->flipflop == 0) {
             if(av_fifo_space(s->recv_buffer) < len) { // not +4
@@ -611,7 +615,7 @@ static void *circular_buffer_task_rx( void *_URLContext)
         //len = recvfrom(s->udp_fd, s->tmp+4, sizeof(s->tmp)-4, 0, (struct sockaddr *)&addr, &addr_len);
         //len2 = recvfrom(s->udp_fd2, s->tmp2+4, sizeof(s->tmp)-4, 0, (struct sockaddr *)&addr2, &addr_len2);
         while (av_fifo_size(s->recv_buffer) < read_step) {
-        	printf("%d\n",av_fifo_size(s->recv_buffer));
+        	//printf("%d\n",av_fifo_size(s->recv_buffer));
         }
         av_fifo_generic_read(s->recv_buffer, s->tmp+4, read_step, NULL);
 
@@ -1345,9 +1349,9 @@ static int udp_write(URLContext *h, const uint8_t *buf, int size)
 			//(struct sockaddr_in *)s->dest_addr2.sin_port = htons(9000);
 			udp_set_url(h,&s->dest_addr2,"127.0.0.1",9000);
 
-			//ret = sendto (s->udp_fd2, buf, size, 0,
-			//						  (struct sockaddr *)&s->dest_addr2,
-			//						  sizeof(s->dest_addr2));
+			ret = sendto (s->udp_fd2, buf, size, 0,
+									  (struct sockaddr *)&s->dest_addr2,
+									  sizeof(s->dest_addr2));
 
     } else
         ret = send(s->udp_fd, buf, size, 0);
