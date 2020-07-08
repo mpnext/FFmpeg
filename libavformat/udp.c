@@ -486,7 +486,7 @@ static void *udp_consumer(void *_URLContext){
     int old_cancelstate;
 
     pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &old_cancelstate);
-    pthread_mutex_lock(&s->mutex);
+    pthread_mutex_lock(&s->rb_mutex);
 
     while(1) {
         int len;
@@ -496,7 +496,7 @@ static void *udp_consumer(void *_URLContext){
         struct sockaddr_storage addr2;
         socklen_t addr_len2 = sizeof(addr2);
 
-        pthread_mutex_unlock(&s->mutex);
+        pthread_mutex_unlock(&s->rb_mutex);
         /* Blocking operations are always cancellation points;
            see "General Information" / "Thread Cancelation Overview"
            in Single Unix. */
@@ -504,7 +504,7 @@ static void *udp_consumer(void *_URLContext){
         len = recvfrom(s->udp_fd, s->raw_tmp1, sizeof(s->raw_tmp1), 0, (struct sockaddr *)&addr, &addr_len);
         len2 = recvfrom(s->udp_fd2, s->raw_tmp2, sizeof(s->raw_tmp2), 0, (struct sockaddr *)&addr2, &addr_len2);
         pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &old_cancelstate);
-        pthread_mutex_lock(&s->mutex);
+        pthread_mutex_lock(&s->rb_mutex);
 
         printf("===%d,%d===\n",len,len2);
 
@@ -562,7 +562,7 @@ static void *udp_consumer(void *_URLContext){
 
 end:
     pthread_cond_signal(&s->rb_cond);
-    pthread_mutex_unlock(&s->mutex);
+    pthread_mutex_unlock(&s->rb_mutex);
     return NULL;
 }
 
