@@ -42,6 +42,7 @@
 #include "os_support.h"
 #include "url.h"
 #include "ip.h"
+#include "longestpath.h"
 
 #ifdef __APPLE__
 #include "TargetConditionals.h"
