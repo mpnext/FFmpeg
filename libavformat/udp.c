@@ -135,11 +135,22 @@ typedef struct UDPContext {
     char *sources;
     char *block;
     IPSourceFilters filters;
+    Graph graph;
+    int dist[MAX_VERTEX_NUMBER + 1];
+    int pre[MAX_VERTEX_NUMBER + 1];
 } UDPContext;
 
 #define OFFSET(x) offsetof(UDPContext, x)
 #define D AV_OPT_FLAG_DECODING_PARAM
 #define E AV_OPT_FLAG_ENCODING_PARAM
+
+//The Consts that MPCM-QoE may use
+#define BUFFER_SIZE_SET_SIZE 3
+#define CHECKSUM_COV_SET_SIZE 3
+#define PREDICT_SCOPE 5
+static const int BufferSizeSet[] = {10000,100000,1000000};
+static const int ChecksumCoverageSet[] = {20, 50, 1472};
+
 static const AVOption options[] = {
     { "buffer_size",    "System data size (in bytes)",                     OFFSET(buffer_size),    AV_OPT_TYPE_INT,    { .i64 = -1 },    -1, INT_MAX, .flags = D|E },
     { "bitrate",        "Bits to send per second",                         OFFSET(bitrate),        AV_OPT_TYPE_INT64,  { .i64 = 0  },     0, INT64_MAX, .flags = E },
@@ -591,6 +602,10 @@ static void *circular_buffer_task_rx( void *_URLContext)
     URLContext *h = _URLContext;
     UDPContext *s = h->priv_data;
     int old_cancelstate;
+    int nextMove;
+    GraphNode nextNode;
+    int bn,zn,un;
+    int bn_tmp, bn_tmp_len;
 
     pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &old_cancelstate);
     pthread_mutex_lock(&s->mutex);
@@ -600,8 +615,6 @@ static void *circular_buffer_task_rx( void *_URLContext)
         goto end;
     }
     while(1) {
-        int len;
-        int len2;
         int read_step = 1000;
         struct sockaddr_storage addr;
         socklen_t addr_len = sizeof(addr);
@@ -623,9 +636,9 @@ static void *circular_buffer_task_rx( void *_URLContext)
         pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &old_cancelstate);
         pthread_mutex_lock(&s->mutex);
 
-        //printf("===%d,%d===\n",len,len2);
+        printf("=udp_task_rx==%d===\n",read_step);
 
-        if (len < 0) {
+        if (read_step < 0) {
             if (ff_neterrno() != AVERROR(EAGAIN) && ff_neterrno() != AVERROR(EINTR)) {
                 s->circular_buffer_error = ff_neterrno();
                 goto end;
@@ -651,6 +664,35 @@ static void *circular_buffer_task_rx( void *_URLContext)
                 s->circular_buffer_error = AVERROR(EIO);
                 goto end;
             }
+        }
+
+        //make run the algorithm at the edge of the Frame
+        if (isStartOfFrame(s->tmp+4)) {
+            //get the model prediction of next Scope
+
+            //clear the edges
+            graph_clear_edges(&(s->graph));
+            //update the edge weghts
+
+            //run the longest path algorithm
+            nextMove = longestPath(s->graph, 0, s->dist, s->pre);
+            nextNode = s->graph.vnodes[nextMove];
+            //get the buffer size, chekcum coverage and protocol of next GOP
+            bn = nextNode.b;
+            zn = nextNode.z;
+            un = nextNode.z == FULL_COV;
+            //take the action and use Path B to cover the switch cost
+            //switch the buffer size
+            if (setsockopt(s->udp_fd, SOL_SOCKET, SO_RCVBUF, &bn, sizeof(bn)) < 0) {
+				ff_log_net_error(h, AV_LOG_WARNING, "setsockopt(SO_RECVBUF)");
+			}
+			if (getsockopt(s->udp_fd, SOL_SOCKET, SO_RCVBUF, &bn_tmp, &bn_tmp_len) < 0) {
+				ff_log_net_error(h, AV_LOG_WARNING, "getsockopt(SO_RCVBUF)");
+			} else {
+				av_log(h, AV_LOG_DEBUG, "end receive buffer size reported is %d\n", bn_tmp);
+				if(bn_tmp < bn)
+					av_log(h, AV_LOG_WARNING, "MPCM_QoE Algorithm attempted to set receive buffer to size %d but it only ended up set as %d\n", bn, bn_tmp);
+			}
         }
 
         //only flip at the edge of Frame
@@ -868,6 +910,32 @@ static int udp_open(URLContext *h, const char *uri, int flags)
     struct sockaddr_storage my_addr;
     struct sockaddr_storage my_addr2;
     socklen_t len,len2;
+    int bs[MAX_VERTEX_NUMBER+1], zs[MAX_VERTEX_NUMBER+1], ks[MAX_VERTEX_NUMBER+1];
+    int gk,gb,gz;
+
+    memset(bs, 0, sizeof(bs));
+    memset(zs, 0, sizeof(zs));
+    memset(ks, 0, sizeof(ks));
+
+    //the step start from 1, step 0 is the auxilary source point
+    for (gk; gk < PREDICT_SCOPE; ++gk){
+        for (gb = 0; gb < BUFFER_SIZE_SET_SIZE; ++gb) {
+            for (gz = 0; gz < CHECKSUM_COV_SET_SIZE; ++gz) {
+                //a for the auxilary source vertex
+                bs[1+gk * BUFFER_SIZE_SET_SIZE * CHECKSUM_COV_SET_SIZE + gb * CHECKSUM_COV_SET_SIZE + gz] = BufferSizeSet[gb];
+                zs[1+gk * BUFFER_SIZE_SET_SIZE * CHECKSUM_COV_SET_SIZE + gb * CHECKSUM_COV_SET_SIZE + gz] = ChecksumCoverageSet[gz];
+                ks[1+gk * BUFFER_SIZE_SET_SIZE * CHECKSUM_COV_SET_SIZE + gb * CHECKSUM_COV_SET_SIZE + gz] = gk + 1;               
+            }
+        }
+    }
+
+    
+    //1 for the auxilary source vertex
+    (s->graph) = construct_graph(1 + BUFFER_SIZE_SET_SIZE * CHECKSUM_COV_SET_SIZE * PREDICT_SCOPE,bs,zs,ks);
+    for (gk = 0;gk < s->graph.V;++gk) {
+        GraphNode node = s->graph.vnodes[gk];
+        printf("%d,%d,%d\n",node.b, node.z, node.k);
+    }
 
     h->is_streamed = 1;
 
