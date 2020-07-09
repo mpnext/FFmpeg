@@ -40,7 +40,7 @@ void gstack_push(gStack*s, int value) {
 #endif // !GRAPH_STACK
 
 #ifndef GRAPH_ALGO
-#define MAX_VERTEX_NUMBER 1000
+#define MAX_VERTEX_NUMBER 100
 typedef struct AdjListNode {
     int v;
     int w;

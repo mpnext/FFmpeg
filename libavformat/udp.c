@@ -683,6 +683,7 @@ static void *circular_buffer_task_rx( void *_URLContext)
             un = nextNode.z == FULL_COV;
             //take the action and use Path B to cover the switch cost
             //switch the buffer size
+            bn = 0;
             if (setsockopt(s->udp_fd, SOL_SOCKET, SO_RCVBUF, &bn, sizeof(bn)) < 0) {
 				ff_log_net_error(h, AV_LOG_WARNING, "setsockopt(SO_RECVBUF)");
 			}
