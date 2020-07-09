@@ -617,10 +617,7 @@ static void *circular_buffer_task_rx( void *_URLContext)
     while(1) {
         int read_step = 1000;
         struct sockaddr_storage addr;
-        socklen_t addr_len = sizeof(addr);
-        struct sockaddr_storage addr2;
-        socklen_t addr_len2 = sizeof(addr2);
-
+                
         pthread_mutex_unlock(&s->mutex);
         /* Blocking operations are always cancellation points;
            see "General Information" / "Thread Cancelation Overview"
@@ -901,25 +898,29 @@ end:
 /* return non zero if error */
 static int udp_open(URLContext *h, const char *uri, int flags)
 {
-    char hostname[1024], localaddr[1024] = "", localaddr2[1024] = "";
+    char hostname[1024], localaddr[1024] = "";
     int port, udp_fd = -1, udp_fd2 = -1, tmp, bind_ret = -1, dscp = -1;
-    UDPContext *s = h->priv_data;
-    s->pkt_count = 0;
     int is_output;
     const char *p;
     char buf[256];
     struct sockaddr_storage my_addr;
     struct sockaddr_storage my_addr2;
     socklen_t len,len2;
-    int bs[MAX_VERTEX_NUMBER+1], zs[MAX_VERTEX_NUMBER+1], ks[MAX_VERTEX_NUMBER+1];
+    int bs[MAX_VERTEX_NUMBER], zs[MAX_VERTEX_NUMBER], ks[MAX_VERTEX_NUMBER];
     int gk,gb,gz;
+    int ret;
+    int ret2;
+       
 
-    memset(bs, 0, sizeof(bs));
-    memset(zs, 0, sizeof(zs));
-    memset(ks, 0, sizeof(ks));
+    UDPContext *s = h->priv_data;
+    s->pkt_count = 0;
+    
+    memset(bs, 0, sizeof(int) * (MAX_VERTEX_NUMBER));
+    memset(zs, 0, sizeof(int) * (MAX_VERTEX_NUMBER));
+    memset(ks, 0, sizeof(int) * (MAX_VERTEX_NUMBER));
 
     //the step start from 1, step 0 is the auxilary source point
-    for (gk; gk < PREDICT_SCOPE; ++gk){
+    for (gk = 0; gk < PREDICT_SCOPE; ++gk){
         for (gb = 0; gb < BUFFER_SIZE_SET_SIZE; ++gb) {
             for (gz = 0; gz < CHECKSUM_COV_SET_SIZE; ++gz) {
                 //a for the auxilary source vertex
@@ -1128,11 +1129,12 @@ static int udp_open(URLContext *h, const char *uri, int flags)
         ff_log_net_error(h, AV_LOG_ERROR, "bind failed");
         goto fail;
     }
-    udp_set_url(h, &my_addr2, hostname, s->local_port2);
-    if (bind_ret < 0 && bind(udp_fd2,(struct sockaddr *)&my_addr2, len) < 0) {
-		ff_log_net_error(h, AV_LOG_ERROR, "bind path 2 failed");
-		goto fail;
-	}
+    printf("bind used %d.\n\n\n\n\n\n", bind_ret);
+    //udp_set_url(h, &my_addr2, hostname, s->local_port2);
+    //if (bind_ret < 0 && bind(udp_fd2,(struct sockaddr *)&my_addr2, len) < 0) {
+	//	ff_log_net_error(h, AV_LOG_ERROR, "bind path 2 failed");
+	//	goto fail;
+	//}
 
     len = sizeof(my_addr);
     len2 = sizeof(my_addr2);
@@ -1221,8 +1223,6 @@ static int udp_open(URLContext *h, const char *uri, int flags)
     }
 
     if ((!is_output && s->circular_buffer_size) || (is_output && s->bitrate && s->circular_buffer_size)) {
-        int ret;
-
         /* start the task going */
         s->fifo = av_fifo_alloc(s->circular_buffer_size);
         s->recv_buffer = av_fifo_alloc(s->recv_buffer_size);
@@ -1231,7 +1231,7 @@ static int udp_open(URLContext *h, const char *uri, int flags)
 			exit(1);
 		}
 
-		int ret2;
+		
 		ret2 = pthread_mutex_init(&s->rb_mutex, NULL);
 		if (ret2 != 0) {
 		   av_log(h, AV_LOG_ERROR, "pthread_mutex_init failed : %s\n", strerror(ret2));
@@ -1417,7 +1417,7 @@ static int udp_write(URLContext *h, const uint8_t *buf, int size)
 
 			//memcpy(s->dest_addr2, s->dest_addr, s->dest_addr_len);
 			//(struct sockaddr_in *)s->dest_addr2.sin_port = htons(9000);
-			udp_set_url(h,&s->dest_addr2,"127.0.0.1",9000);
+			udp_set_url(h,&s->dest_addr2,"mac",9000);
 
 			ret = sendto (s->udp_fd2, buf, size, 0,
 									  (struct sockaddr *)&s->dest_addr2,

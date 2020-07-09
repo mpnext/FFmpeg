@@ -6,9 +6,9 @@
 #ifndef GRAPH_STACK
 #define MAX_STACK_SIZE 10000
 
-#ifndef FULL COV
+#ifndef FULL_COV
 #define FULL_COV 1472
-#endif // !FULL COV
+#endif //FULL_COV
 
 typedef struct gStack {
     int top;
@@ -37,7 +37,7 @@ void gstack_push(gStack*s, int value) {
     ++s->top;
     s->buffer[s->top] = value;
 }
-#endif // !GRAPH_STACK
+#endif // GRAPH_STACK
 
 #ifndef GRAPH_ALGO
 #define MAX_VERTEX_NUMBER 100
@@ -64,7 +64,7 @@ int destroy_graph(Graph* g);
 void graph_add_edge(Graph* g, int u, int v, int weight);
 void graph_clear_edges(Graph* g);
 int longestPath(Graph g, int source, int dist[MAX_VERTEX_NUMBER], int pre[MAX_VERTEX_NUMBER]);
-#endif // !GRAPH_ALGO
+#endif // GRAPH_ALGO
 
 #define NINF INT_MIN
 
@@ -78,8 +78,8 @@ static int adj_list_alloc(AdjListNode adj[MAX_VERTEX_NUMBER][MAX_VERTEX_NUMBER],
 }
 
 static void adj_list_free(AdjListNode adj[MAX_VERTEX_NUMBER][MAX_VERTEX_NUMBER], int V) {
-    memset(adj, 0, sizeof(adj));
     int i;
+    memset(adj, 0, sizeof(AdjListNode) * MAX_VERTEX_NUMBER * MAX_VERTEX_NUMBER);
     for (i = 0; i < V; ++i) {
         adj[i][0].v = -1;
         adj[i][0].w = -1;
@@ -90,8 +90,8 @@ Graph construct_graph(int V, const int* bs, const int *zs, const int *ks) {
     Graph g;
     int i;
     g.V = V;
-    memset(g.vnodes, 0, sizeof(g.vnodes));
-    memset(g.adj, 0, sizeof(g.adj));
+    memset(g.vnodes, 0, sizeof(GraphNode) * MAX_VERTEX_NUMBER);
+    memset(g.adj, 0, sizeof(AdjListNode) * MAX_VERTEX_NUMBER * MAX_VERTEX_NUMBER);
     if (adj_list_alloc(g.adj, V) != 0) {
         printf("Failed to alloc memory for Linked List.");
         exit(1);
@@ -106,9 +106,8 @@ Graph construct_graph(int V, const int* bs, const int *zs, const int *ks) {
 }
 
 int destroy_graph(Graph* g) {
-    int i = 0;
     adj_list_free(g->adj, g->V);
-    memset(g, 0, sizeof(g));
+    memset(g, 0, sizeof(Graph));
     g->V = -1;
     return 0;
 }
@@ -127,15 +126,15 @@ void graph_clear_edges(Graph* g) {
 }
 
 static void topsort(Graph* g, int v, int visited[], gStack* stack) {
-    visited[v] = 1;
     int i = 0;
+    AdjListNode node;
+    visited[v] = 1;
     for (i = 0; i < g->tails[v]; ++i) {
-        AdjListNode node = g->adj[v][i];
+        node = g->adj[v][i];
         if (visited[node.v] == 0) {
             topsort(g, node.v, visited, stack);
         }
     }
-    //printf("%d;", v);
     gstack_push(stack, v);
 }
 
@@ -149,7 +148,7 @@ static int path_trace_back(const Graph* g, int pre[MAX_VERTEX_NUMBER], int v) {
     u = pre[v];
     if (u < 0 || u > g->V) {
         printf("Nodes has no precessor!\n");
-        //exit(1);
+        exit(1);
         return v;
     }
     while (pre[u] != -1) {
@@ -166,20 +165,20 @@ int longestPath(Graph g, int source, int dist[MAX_VERTEX_NUMBER], int pre[MAX_VE
     int maxDist, maxDistIndex;
     int nextVertex;
     AdjListNode inode;
-    memset(visited, 0, sizeof(visited));
+    gStack stack;
+    memset(visited, 0, sizeof(int) * MAX_VERTEX_NUMBER);
     for (i = 0; i < g.V; ++i) {
         dist[i] = NINF;
     }
     dist[source] = 0;
     pre[source] = -1;
-    gStack stack;
+    
     gstack_init(&stack);
     topsort(&g, 1, visited, &stack);
 
     //process the longest path in topological order
     while (!gstack_emtpy(stack)) {
-        int u = gstack_top(&stack);
-
+        u = gstack_top(&stack);
         gstack_pop(&stack);
         if (dist[u] != NINF) {
             for (i = 0; i < g.tails[u]; ++i) {
