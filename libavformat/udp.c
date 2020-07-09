@@ -1149,7 +1149,7 @@ static int udp_open(URLContext *h, const char *uri, int flags)
     //decomment this line on receiver
     char sbuf[100];
     udp_hostname(&my_addr, len, sbuf);
-    udp_set_url(h, &my_addr2, sbuf, s->local_port2);
+    udp_set_url(h, &my_addr2, sbuf, udp_port(&my_addr, len) + 1000);
     
     if (bind_ret < 0 && bind(udp_fd2,(struct sockaddr *)&my_addr2, len) < 0) {
 		ff_log_net_error(h, AV_LOG_ERROR, "bind path 2 failed");
