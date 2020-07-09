@@ -525,7 +525,9 @@ static void *udp_consumer(void *_URLContext){
            see "General Information" / "Thread Cancelation Overview"
            in Single Unix. */
         pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, &old_cancelstate);
+        printf("1===%d,%d===\n",len,len2);
         len = recvfrom(s->udp_fd, s->raw_tmp1, sizeof(s->raw_tmp1), 0, (struct sockaddr *)&addr, &addr_len);
+        printf("2===%d,%d===\n",len,len2);
         len2 = recvfrom(s->udp_fd2, s->raw_tmp2, sizeof(s->raw_tmp2), 0, (struct sockaddr *)&addr2, &addr_len2);
         pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &old_cancelstate);
         pthread_mutex_lock(&s->rb_mutex);
@@ -684,7 +686,8 @@ static void *circular_buffer_task_rx( void *_URLContext)
             //update the edge weghts
 
             //run the longest path algorithm
-            nextMove = longestPath(s->graph, 0, s->dist, s->pre);
+            //nextMove = longestPath(s->graph, 0, s->dist, s->pre);
+	    nextMove = 0;
             nextNode = s->graph.vnodes[nextMove];
             //get the buffer size, chekcum coverage and protocol of next GOP
             bn = nextNode.b;
@@ -922,6 +925,7 @@ static int udp_open(URLContext *h, const char *uri, int flags)
     int gk,gb,gz;
     int ret;
     int ret2;
+    char sbuf[1024];
        
 
     UDPContext *s = h->priv_data;
@@ -1145,16 +1149,19 @@ static int udp_open(URLContext *h, const char *uri, int flags)
     }
     printf("bind used %d.\n\n\n\n\n\n", bind_ret);
     memcpy(&my_addr2, &my_addr, sizeof(my_addr));
-    //TODO:comment this line on sender
-    //decomment this line on receiver
-    char sbuf[100];
-    udp_hostname(&my_addr, len, sbuf);
-    udp_set_url(h, &my_addr2, sbuf, udp_port(&my_addr, len) + 1000);
+    //TODO:The bug is that this function udp_hostname is wrong
+    ret = udp_hostname(&my_addr, len, sbuf);
+    printf("%s\n", sbuf);
+    if (ret == 0) {
+        udp_set_url(h, &my_addr2, "192.168.0.140", 9000);
+        printf("%s\n", sbuf);
+    }
     
-    if (bind_ret < 0 && bind(udp_fd2,(struct sockaddr *)&my_addr2, len) < 0) {
-		ff_log_net_error(h, AV_LOG_ERROR, "bind path 2 failed");
-		goto fail;
-	}
+    
+    if (bind_ret < 0 && bind(udp_fd2,(struct sockaddr *)&my_addr2, len2) < 0) {
+	ff_log_net_error(h, AV_LOG_ERROR, "bind path 2 failed");
+	goto fail;
+    }
 
     getsockname(udp_fd, (struct sockaddr *)&my_addr, &len);
     getsockname(udp_fd2, (struct sockaddr *)&my_addr2, &len2);
