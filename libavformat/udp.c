@@ -1131,7 +1131,7 @@ static int udp_open(URLContext *h, const char *uri, int flags)
     }
     printf("bind used %d.\n\n\n\n\n\n", bind_ret);
     memcpy(&my_addr2, &my_addr, sizeof(my_addr));
-    //comment this line on sender
+    //TODO:comment this line on sender
     //decomment this line on receiver
     //udp_set_url(h, &my_addr2, "localhost", s->local_port2);
     
