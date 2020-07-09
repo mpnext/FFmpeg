@@ -1130,11 +1130,15 @@ static int udp_open(URLContext *h, const char *uri, int flags)
         goto fail;
     }
     printf("bind used %d.\n\n\n\n\n\n", bind_ret);
-    //udp_set_url(h, &my_addr2, hostname, s->local_port2);
-    //if (bind_ret < 0 && bind(udp_fd2,(struct sockaddr *)&my_addr2, len) < 0) {
-	//	ff_log_net_error(h, AV_LOG_ERROR, "bind path 2 failed");
-	//	goto fail;
-	//}
+    memcpy(&my_addr2, &my_addr, sizeof(my_addr));
+    //comment this line on sender
+    //decomment this line on receiver
+    //udp_set_url(h, &my_addr2, "localhost", s->local_port2);
+    
+    if (bind_ret < 0 && bind(udp_fd2,(struct sockaddr *)&my_addr2, len) < 0) {
+		ff_log_net_error(h, AV_LOG_ERROR, "bind path 2 failed");
+		goto fail;
+	}
 
     len = sizeof(my_addr);
     len2 = sizeof(my_addr2);
@@ -1417,7 +1421,7 @@ static int udp_write(URLContext *h, const uint8_t *buf, int size)
 
 			//memcpy(s->dest_addr2, s->dest_addr, s->dest_addr_len);
 			//(struct sockaddr_in *)s->dest_addr2.sin_port = htons(9000);
-			udp_set_url(h,&s->dest_addr2,"mac",9000);
+			//udp_set_url(h,&s->dest_addr2,"mac",9000);
 
 			ret = sendto (s->udp_fd2, buf, size, 0,
 									  (struct sockaddr *)&s->dest_addr2,
