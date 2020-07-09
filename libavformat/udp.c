@@ -403,6 +403,18 @@ static int udp_socket_create(URLContext *h, struct sockaddr_storage *addr,
     return -1;
 }
 
+static int udp_hostname(struct sockaddr_storage *addr, int addr_len, char* sbuf)
+{
+    int error;
+
+    if ((error = getnameinfo((struct sockaddr *)addr, addr_len, NULL, 0,  sbuf, sizeof(sbuf), NI_NAMEREQD)) != 0) {
+        av_log(NULL, AV_LOG_ERROR, "getnameinfo: %s\n", gai_strerror(error));
+        return -1;
+    }
+
+    return 0;
+}
+
 static int udp_port(struct sockaddr_storage *addr, int addr_len)
 {
     char sbuf[sizeof(int)*3+1];
@@ -1125,6 +1137,8 @@ static int udp_open(URLContext *h, const char *uri, int flags)
     /* bind to the local address if not multicast or if the multicast
      * bind failed */
     /* the bind is needed to give a port to the socket now */
+    len = sizeof(my_addr);
+    len2 = sizeof(my_addr2);
     if (bind_ret < 0 && bind(udp_fd,(struct sockaddr *)&my_addr, len) < 0) {
         ff_log_net_error(h, AV_LOG_ERROR, "bind failed");
         goto fail;
@@ -1133,15 +1147,15 @@ static int udp_open(URLContext *h, const char *uri, int flags)
     memcpy(&my_addr2, &my_addr, sizeof(my_addr));
     //TODO:comment this line on sender
     //decomment this line on receiver
-    //udp_set_url(h, &my_addr2, "localhost", s->local_port2);
+    char sbuf[100];
+    udp_hostname(&my_addr, len, sbuf);
+    udp_set_url(h, &my_addr2, sbuf, s->local_port2);
     
     if (bind_ret < 0 && bind(udp_fd2,(struct sockaddr *)&my_addr2, len) < 0) {
 		ff_log_net_error(h, AV_LOG_ERROR, "bind path 2 failed");
 		goto fail;
 	}
 
-    len = sizeof(my_addr);
-    len2 = sizeof(my_addr2);
     getsockname(udp_fd, (struct sockaddr *)&my_addr, &len);
     getsockname(udp_fd2, (struct sockaddr *)&my_addr2, &len2);
     s->local_port = udp_port(&my_addr, len);
