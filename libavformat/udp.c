@@ -138,6 +138,7 @@ typedef struct UDPContext {
     Graph graph;
     int dist[MAX_VERTEX_NUMBER + 1];
     int pre[MAX_VERTEX_NUMBER + 1];
+    int qoe_cur;
 } UDPContext;
 
 #define OFFSET(x) offsetof(UDPContext, x)
@@ -684,10 +685,46 @@ static void *circular_buffer_task_rx( void *_URLContext)
             //clear the edges
             graph_clear_edges(&(s->graph));
             //update the edge weghts
+            int gk,gb,gz,gbb,gzz;
+            int q1,q2;
+            int u,v;
+            int lambda;
+            int weight;
 
+            lambda = 1;
+            //first step
+            gk = 0;
+            q1 = s->qoe_cur;
+            for (gbb = 0; gb < BUFFER_SIZE_SET_SIZE; ++gbb) {
+                for (gzz = 0; gzz < BUFFER_SIZE_SET_SIZE; ++gzz) {
+                    q2 = BufferSizeSet[gbb] * ChecksumCoverageSet[gzz];
+                    weight = q2 - lambda*abs(q2-q1);
+                    u = 0;
+                    v = gbb * CHECKSUM_COV_SET_SIZE + gzz + 1;
+                    graph_add_edge(&s->graph,u,v,weight);
+                }
+            }
+    
+            //inner edges
+            for (gk = 1;gk < PREDICT_SCOPE - 1;++gk) {
+                for (gb = 0; gb < BUFFER_SIZE_SET_SIZE; ++gb) {
+                    for (gz = 0; gz < CHECKSUM_COV_SET_SIZE; ++gz) {
+                        q1 = BufferSizeSet[gb] * ChecksumCoverageSet[gz];
+                        for (gbb = 0; gb < BUFFER_SIZE_SET_SIZE; ++gbb) {
+                            for (gzz = 0; gzz < BUFFER_SIZE_SET_SIZE; ++gzz) {
+                                q2 = BufferSizeSet[gbb] * ChecksumCoverageSet[gzz];
+                                weight = q2 - lambda*abs(q2-q1);
+                                u = 1 + gk * BUFFER_SIZE_SET_SIZE * CHECKSUM_COV_SET_SIZE + gb * CHECKSUM_COV_SET_SIZE + gz;
+                                v = 1 + (gk+1) * BUFFER_SIZE_SET_SIZE * CHECKSUM_COV_SET_SIZE + gbb * CHECKSUM_COV_SET_SIZE + gzz;
+                                graph_add_edge(&s->graph,u,v,weight);
+                            }
+                        }
+                    }
+                }
+            }
             //run the longest path algorithm
-            //nextMove = longestPath(s->graph, 0, s->dist, s->pre);
-	    nextMove = 0;
+            nextMove = longestPath(s->graph, 0, s->dist, s->pre);
+	        //nextMove = 0;
             nextNode = s->graph.vnodes[nextMove];
             //get the buffer size, chekcum coverage and protocol of next GOP
             bn = nextNode.b;
@@ -1153,7 +1190,7 @@ static int udp_open(URLContext *h, const char *uri, int flags)
     ret = udp_hostname(&my_addr, len, sbuf);
     printf("%s\n", sbuf);
     if (ret == 0) {
-        udp_set_url(h, &my_addr2, "192.168.0.140", 9000);
+        udp_set_url(h, &my_addr2, "192.168.0.111", 9000);
         printf("%s\n", sbuf);
     }
     
