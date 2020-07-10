@@ -490,6 +490,7 @@ static void *udp_consumer(void *recv_thread_args){
     URLContext *h = args->h;
     int path_id = args->path_num;
     UDPContext *s = h->priv_data;
+    printf("consumer thread: %d", path_id);
     int old_cancelstate;
 
     pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &old_cancelstate);
@@ -724,13 +725,13 @@ static void *circular_buffer_task_tx( void *_URLContext)
     int64_t burst_interval = s->bitrate ? (s->burst_bits * 1000000 / s->bitrate) : 0;
     int64_t max_delay = s->bitrate ?  ((int64_t)h->max_packet_size * 8 * 1000000 / s->bitrate + 1) : 0;
 
+    pthread_mutex_lock(&s->mutex);
+
     if (s->flipflop == 0) {
     	s->flipflop = 1;
     } else {
     	s->flipflop = 0;
     }
-
-    pthread_mutex_lock(&s->mutex);
 
     if (ff_socket_nonblock(s->udp_fd, 0) < 0) {
         av_log(h, AV_LOG_ERROR, "Failed to set blocking mode");
@@ -801,7 +802,6 @@ static void *circular_buffer_task_tx( void *_URLContext)
             									(struct sockaddr *) &s->dest_addr2,
             									s->dest_addr_len2);
             	}
-
             } else
                 ret = send(s->udp_fd, p, len, 0);
             if (ret >= 0) {
@@ -1148,18 +1148,16 @@ static int udp_open(URLContext *h, const char *uri, int flags)
             av_log(h,AV_LOG_ERROR, "pthread_cond_init rb failed %s\n", strerror(ret2));
             goto cond_fail;
         }
-        struct recv_thread_args *args;
-        args->h = h;
+        struct recv_thread_args args[2];
         for(path_num = 1; path_num < 3; path_num++){
-            args->path_num = path_num;
-            ret2 = pthread_create(&s->recv_buffer_thread, NULL, udp_consumer, args);
+            args[path_num-1].h = h;
+            args[path_num-1].path_num = path_num;
+            ret2 = pthread_create(&s->recv_buffer_thread, NULL, udp_consumer, &args[path_num-1]);
             if(ret2 != 0) {
                 av_log(h,AV_LOG_ERROR, "pthread_create rb failed %s\n", strerror(ret2));
                 goto thread_fail;
             }
         }
-
-		
 
         ret = pthread_mutex_init(&s->mutex, NULL);
         if (ret != 0) {
@@ -1280,8 +1278,6 @@ static int udp_write(URLContext *h, const uint8_t *buf, int size)
     UDPContext *s = h->priv_data;
     int ret;
 
-    //printf("udp_write======================================\n");
-
 #if HAVE_PTHREAD_CANCEL
     if (s->fifo) {
         uint8_t tmp[4];
@@ -1316,26 +1312,32 @@ static int udp_write(URLContext *h, const uint8_t *buf, int size)
         if (ret < 0)
             return ret;
     }
-    if (s->flipflop == 0) {
-    	s->flipflop = 1;
-    } else {
-    	s->flipflop = 0;
+    if(isStartOfFrame(buf)){
+        
+        if (s->flipflop == 0) {
+            s->flipflop = 1;
+        } else {
+            s->flipflop = 0;
+        }
+        printf("change, filpflop %d\n", s->flipflop);
     }
+
     if (!s->is_connected) {
    	        //int nal_type = buf[4] & 31;
-    		printf("%x,%x,%x,%x,%x,%x\n",buf[0],buf[1],buf[2],buf[3],buf[4],buf[5]);
-			ret = sendto (s->udp_fd, buf, size, 0,
-									  (struct sockaddr *) &s->dest_addr,
-									  s->dest_addr_len);
+    		// printf("%x,%x,%x,%x,%x,%x\n",buf[0],buf[1],buf[2],buf[3],buf[4],buf[5]);
+            if(s->flipflop == 0){
+                ret = sendto (s->udp_fd, buf, size, 0,
+                            (struct sockaddr *) &s->dest_addr,
+                            s->dest_addr_len);
+            }else{
+                udp_set_url(h,&s->dest_addr2,"127.0.0.1",9000);
+                ret = sendto (s->udp_fd2, buf, size, 0,
+                            (struct sockaddr *)&s->dest_addr2,
+                            sizeof(s->dest_addr2));
+            }
 
 			//memcpy(s->dest_addr2, s->dest_addr, s->dest_addr_len);
 			//(struct sockaddr_in *)s->dest_addr2.sin_port = htons(9000);
-			udp_set_url(h,&s->dest_addr2,"127.0.0.1",9000);
-
-			ret = sendto (s->udp_fd2, buf, size, 0,
-									  (struct sockaddr *)&s->dest_addr2,
-									  sizeof(s->dest_addr2));
-
     } else
         ret = send(s->udp_fd, buf, size, 0);
 
