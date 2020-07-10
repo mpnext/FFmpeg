@@ -142,13 +142,13 @@ static int path_trace_back(const Graph* g, int pre[MAX_VERTEX_NUMBER], int v) {
     int u;
     if (v < 0 || v > g->V) {
         printf("Invalid start nodes for path_trace!\n");
-        exit(1);
+        //exit(1);
         return -1;
     }
     u = pre[v];
     if (u < 0 || u > g->V) {
         printf("Nodes has no precessor!\n");
-        exit(1);
+        //exit(1);
         return v;
     }
     while (pre[u] != -1) {

@@ -526,14 +526,14 @@ static void *udp_consumer(void *_URLContext){
            see "General Information" / "Thread Cancelation Overview"
            in Single Unix. */
         pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, &old_cancelstate);
-        printf("1===%d,%d===\n",len,len2);
+        //printf("1===%d,%d===\n",len,len2);
         len = recvfrom(s->udp_fd, s->raw_tmp1, sizeof(s->raw_tmp1), 0, (struct sockaddr *)&addr, &addr_len);
-        printf("2===%d,%d===\n",len,len2);
+        //printf("2===%d,%d===\n",len,len2);
         len2 = recvfrom(s->udp_fd2, s->raw_tmp2, sizeof(s->raw_tmp2), 0, (struct sockaddr *)&addr2, &addr_len2);
         pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &old_cancelstate);
         pthread_mutex_lock(&s->rb_mutex);
 
-        printf("===%d,%d===\n",len,len2);
+        //printf("===%d,%d===\n",len,len2);
 
         if (len < 0 || len2 < 0) {
             if (ff_neterrno() != AVERROR(EAGAIN) && ff_neterrno() != AVERROR(EINTR)) {
@@ -648,7 +648,7 @@ static void *circular_buffer_task_rx( void *_URLContext)
         pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &old_cancelstate);
         pthread_mutex_lock(&s->mutex);
 
-        printf("=udp_task_rx==%d===\n",read_step);
+        //printf("=udp_task_rx==%d===\n",read_step);
 
         if (read_step < 0) {
             if (ff_neterrno() != AVERROR(EAGAIN) && ff_neterrno() != AVERROR(EINTR)) {
@@ -696,22 +696,23 @@ static void *circular_buffer_task_rx( void *_URLContext)
             gk = 0;
             q1 = s->qoe_cur;
             for (gbb = 0; gb < BUFFER_SIZE_SET_SIZE; ++gbb) {
-                for (gzz = 0; gzz < BUFFER_SIZE_SET_SIZE; ++gzz) {
+                for (gzz = 0; gzz < CHECKSUM_COV_SET_SIZE; ++gzz) {
                     q2 = BufferSizeSet[gbb] * ChecksumCoverageSet[gzz];
-                    weight = q2 - lambda*abs(q2-q1);
+                    weight = q2 - lambda * abs(q2-q1);
                     u = 0;
                     v = gbb * CHECKSUM_COV_SET_SIZE + gzz + 1;
                     graph_add_edge(&s->graph,u,v,weight);
                 }
             }
+            
     
             //inner edges
             for (gk = 1;gk < PREDICT_SCOPE - 1;++gk) {
                 for (gb = 0; gb < BUFFER_SIZE_SET_SIZE; ++gb) {
                     for (gz = 0; gz < CHECKSUM_COV_SET_SIZE; ++gz) {
                         q1 = BufferSizeSet[gb] * ChecksumCoverageSet[gz];
-                        for (gbb = 0; gb < BUFFER_SIZE_SET_SIZE; ++gbb) {
-                            for (gzz = 0; gzz < BUFFER_SIZE_SET_SIZE; ++gzz) {
+                        for (gbb = 0; gbb < BUFFER_SIZE_SET_SIZE; ++gbb) {
+                            for (gzz = 0; gzz < CHECKSUM_COV_SET_SIZE; ++gzz) {
                                 q2 = BufferSizeSet[gbb] * ChecksumCoverageSet[gzz];
                                 weight = q2 - lambda*abs(q2-q1);
                                 u = 1 + gk * BUFFER_SIZE_SET_SIZE * CHECKSUM_COV_SET_SIZE + gb * CHECKSUM_COV_SET_SIZE + gz;
@@ -722,17 +723,21 @@ static void *circular_buffer_task_rx( void *_URLContext)
                     }
                 }
             }
+            
             //run the longest path algorithm
             nextMove = longestPath(s->graph, 0, s->dist, s->pre);
-	        //nextMove = 0;
-            nextNode = s->graph.vnodes[nextMove];
+            if (nextMove <= 0) {
+                printf("Failed to run longestPath...\n\n\n\n\n\n\n\n");
+                nextMove = 0;
+            }
+	        nextNode = s->graph.vnodes[nextMove];
             //get the buffer size, chekcum coverage and protocol of next GOP
             bn = nextNode.b;
             zn = nextNode.z;
             un = nextNode.z == FULL_COV;
+            printf("Next Move Params are %d...\n\n\n\n\n\n\n\n",bn);
             //take the action and use Path B to cover the switch cost
             //switch the buffer size
-            bn = 0;
             if (setsockopt(s->udp_fd, SOL_SOCKET, SO_RCVBUF, &bn, sizeof(bn)) < 0) {
 				ff_log_net_error(h, AV_LOG_WARNING, "setsockopt(SO_RECVBUF)");
 			}
@@ -991,6 +996,8 @@ static int udp_open(URLContext *h, const char *uri, int flags)
         GraphNode node = s->graph.vnodes[gk];
         printf("%d,%d,%d\n",node.b, node.z, node.k);
     }
+    
+    s->qoe_cur = 10;
 
     h->is_streamed = 1;
 
@@ -1190,7 +1197,7 @@ static int udp_open(URLContext *h, const char *uri, int flags)
     ret = udp_hostname(&my_addr, len, sbuf);
     printf("%s\n", sbuf);
     if (ret == 0) {
-        udp_set_url(h, &my_addr2, "192.168.0.140", 9000);
+        udp_set_url(h, &my_addr2, "192.168.0.111", 9000);
         printf("%s\n", sbuf);
     }
     
@@ -1472,7 +1479,7 @@ static int udp_write(URLContext *h, const uint8_t *buf, int size)
     }
     if (!s->is_connected) {
    	        //int nal_type = buf[4] & 31;
-    		printf("%x,%x,%x,%x,%x,%x\n",buf[0],buf[1],buf[2],buf[3],buf[4],buf[5]);
+    		//printf("%x,%x,%x,%x,%x,%x\n",buf[0],buf[1],buf[2],buf[3],buf[4],buf[5]);
 			ret = sendto (s->udp_fd, buf, size, 0,
 									  (struct sockaddr *) &s->dest_addr,
 									  s->dest_addr_len);
