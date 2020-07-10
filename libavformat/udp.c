@@ -727,7 +727,8 @@ static void *circular_buffer_task_rx( void *_URLContext)
             }
             
             //run the longest path algorithm
-            nextMove = longestPath(s->graph, 0, s->dist, s->pre);
+            //TODO:bug in longestPath, core dump
+            //nextMove = longestPath(s->graph, 0, s->dist, s->pre);
             if (nextMove <= 0) {
                 printf("Failed to run longestPath...\n\n\n\n\n\n\n\n");
                 nextMove = 0;
@@ -739,7 +740,8 @@ static void *circular_buffer_task_rx( void *_URLContext)
             un = nextNode.z == FULL_COV;
             printf("Next Move Params are %d...\n\n\n\n\n\n\n\n",bn);
             //take the action and use Path B to cover the switch cost
-            //switch the buffer size
+            //TODO:switch the buffer size
+            //TODO:this switch leads to lots of loss, which is the major cause of poor quality
             if (setsockopt(s->udp_fd, SOL_SOCKET, SO_RCVBUF, &bn, sizeof(bn)) < 0) {
 				ff_log_net_error(h, AV_LOG_WARNING, "setsockopt(SO_RECVBUF)");
 			}

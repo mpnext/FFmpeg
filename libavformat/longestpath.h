@@ -208,7 +208,9 @@ int longestPath(Graph g, int source, int dist[MAX_VERTEX_NUMBER], int pre[MAX_VE
     //record the nextVertex to use in algorithm
     //use the buffer size and checksum coverage of nextVertex in next move
     printf("MaxDist=%d, MaxDistIndex=%d", maxDist,maxDistIndex);
+    //TODO:Bug in path_trace_back
     nextVertex = path_trace_back(&g, pre, maxDistIndex);
+    //nextVertex=10;
 
     return nextVertex;
 }
