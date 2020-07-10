@@ -702,6 +702,7 @@ static void *circular_buffer_task_rx( void *_URLContext)
                     u = 0;
                     v = gbb * CHECKSUM_COV_SET_SIZE + gzz + 1;
                     graph_add_edge(&s->graph,u,v,weight);
+                    printf("Add edge:%d,%d,%d\n",u,v,weight);
                 }
             }
             
@@ -718,6 +719,7 @@ static void *circular_buffer_task_rx( void *_URLContext)
                                 u = 1 + gk * BUFFER_SIZE_SET_SIZE * CHECKSUM_COV_SET_SIZE + gb * CHECKSUM_COV_SET_SIZE + gz;
                                 v = 1 + (gk+1) * BUFFER_SIZE_SET_SIZE * CHECKSUM_COV_SET_SIZE + gbb * CHECKSUM_COV_SET_SIZE + gzz;
                                 graph_add_edge(&s->graph,u,v,weight);
+                                printf("Add edge:%d,%d,%d\n",u,v,weight);
                             }
                         }
                     }
