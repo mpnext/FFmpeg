@@ -691,11 +691,11 @@ static void *circular_buffer_task_rx( void *_URLContext)
             int lambda;
             int weight;
 
-            lambda = 1;
+            lambda = 0;
             //first step
             gk = 0;
             q1 = s->qoe_cur;
-            for (gbb = 0; gb < BUFFER_SIZE_SET_SIZE; ++gbb) {
+            for (gbb = 0; gbb < BUFFER_SIZE_SET_SIZE; ++gbb) {
                 for (gzz = 0; gzz < CHECKSUM_COV_SET_SIZE; ++gzz) {
                     q2 = BufferSizeSet[gbb] * ChecksumCoverageSet[gzz];
                     weight = q2 - lambda * abs(q2-q1);
@@ -708,7 +708,7 @@ static void *circular_buffer_task_rx( void *_URLContext)
             
     
             //inner edges
-            for (gk = 1;gk < PREDICT_SCOPE - 1;++gk) {
+            for (gk = 0;gk < PREDICT_SCOPE - 1;++gk) {
                 for (gb = 0; gb < BUFFER_SIZE_SET_SIZE; ++gb) {
                     for (gz = 0; gz < CHECKSUM_COV_SET_SIZE; ++gz) {
                         q1 = BufferSizeSet[gb] * ChecksumCoverageSet[gz];

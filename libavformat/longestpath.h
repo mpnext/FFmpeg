@@ -197,6 +197,7 @@ int longestPath(Graph g, int source, int dist[MAX_VERTEX_NUMBER], int pre[MAX_VE
     //find the node with maxDist
     //which should be at the last layer
     for (i = 0; i < g.V; i++) {
+        printf("Dist %d,Pre %d\n", dist[i],pre[i]);
         if (dist[i] > maxDist) {
             maxDist = dist[i];
             maxDistIndex = i;
@@ -206,7 +207,7 @@ int longestPath(Graph g, int source, int dist[MAX_VERTEX_NUMBER], int pre[MAX_VE
     //use the precessor array to back_track the nextVertex
     //record the nextVertex to use in algorithm
     //use the buffer size and checksum coverage of nextVertex in next move
-    nextVertex = -1;
+    printf("MaxDist=%d, MaxDistIndex=%d", maxDist,maxDistIndex);
     nextVertex = path_trace_back(&g, pre, maxDistIndex);
 
     return nextVertex;
