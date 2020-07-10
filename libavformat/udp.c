@@ -1190,7 +1190,7 @@ static int udp_open(URLContext *h, const char *uri, int flags)
     ret = udp_hostname(&my_addr, len, sbuf);
     printf("%s\n", sbuf);
     if (ret == 0) {
-        udp_set_url(h, &my_addr2, "192.168.0.111", 9000);
+        udp_set_url(h, &my_addr2, "192.168.0.140", 9000);
         printf("%s\n", sbuf);
     }
     
