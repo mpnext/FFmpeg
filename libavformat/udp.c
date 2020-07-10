@@ -138,6 +138,7 @@ typedef struct UDPContext {
     Graph graph;
     int dist[MAX_VERTEX_NUMBER + 1];
     int pre[MAX_VERTEX_NUMBER + 1];
+    int qoe_cur;
 } UDPContext;
 
 #define OFFSET(x) offsetof(UDPContext, x)
@@ -403,6 +404,18 @@ static int udp_socket_create(URLContext *h, struct sockaddr_storage *addr,
     return -1;
 }
 
+static int udp_hostname(struct sockaddr_storage *addr, int addr_len, char* sbuf)
+{
+    int error;
+
+    if ((error = getnameinfo((struct sockaddr *)addr, addr_len, NULL, 0,  sbuf, sizeof(sbuf), NI_NAMEREQD)) != 0) {
+        av_log(NULL, AV_LOG_ERROR, "getnameinfo: %s\n", gai_strerror(error));
+        return -1;
+    }
+
+    return 0;
+}
+
 static int udp_port(struct sockaddr_storage *addr, int addr_len)
 {
     char sbuf[sizeof(int)*3+1];
@@ -513,12 +526,14 @@ static void *udp_consumer(void *_URLContext){
            see "General Information" / "Thread Cancelation Overview"
            in Single Unix. */
         pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, &old_cancelstate);
+        //printf("1===%d,%d===\n",len,len2);
         len = recvfrom(s->udp_fd, s->raw_tmp1, sizeof(s->raw_tmp1), 0, (struct sockaddr *)&addr, &addr_len);
+        //printf("2===%d,%d===\n",len,len2);
         len2 = recvfrom(s->udp_fd2, s->raw_tmp2, sizeof(s->raw_tmp2), 0, (struct sockaddr *)&addr2, &addr_len2);
         pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &old_cancelstate);
         pthread_mutex_lock(&s->rb_mutex);
 
-        printf("===%d,%d===\n",len,len2);
+        //printf("===%d,%d===\n",len,len2);
 
         if (len < 0 || len2 < 0) {
             if (ff_neterrno() != AVERROR(EAGAIN) && ff_neterrno() != AVERROR(EINTR)) {
@@ -617,10 +632,7 @@ static void *circular_buffer_task_rx( void *_URLContext)
     while(1) {
         int read_step = 1000;
         struct sockaddr_storage addr;
-        socklen_t addr_len = sizeof(addr);
-        struct sockaddr_storage addr2;
-        socklen_t addr_len2 = sizeof(addr2);
-
+                
         pthread_mutex_unlock(&s->mutex);
         /* Blocking operations are always cancellation points;
            see "General Information" / "Thread Cancelation Overview"
@@ -636,7 +648,7 @@ static void *circular_buffer_task_rx( void *_URLContext)
         pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &old_cancelstate);
         pthread_mutex_lock(&s->mutex);
 
-        printf("=udp_task_rx==%d===\n",read_step);
+        //printf("=udp_task_rx==%d===\n",read_step);
 
         if (read_step < 0) {
             if (ff_neterrno() != AVERROR(EAGAIN) && ff_neterrno() != AVERROR(EINTR)) {
@@ -673,16 +685,63 @@ static void *circular_buffer_task_rx( void *_URLContext)
             //clear the edges
             graph_clear_edges(&(s->graph));
             //update the edge weghts
+            int gk,gb,gz,gbb,gzz;
+            int q1,q2;
+            int u,v;
+            int lambda;
+            int weight;
 
+            lambda = 0;
+            //first step
+            gk = 0;
+            q1 = s->qoe_cur;
+            for (gbb = 0; gbb < BUFFER_SIZE_SET_SIZE; ++gbb) {
+                for (gzz = 0; gzz < CHECKSUM_COV_SET_SIZE; ++gzz) {
+                    q2 = BufferSizeSet[gbb] * ChecksumCoverageSet[gzz];
+                    weight = q2 - lambda * abs(q2-q1);
+                    u = 0;
+                    v = gbb * CHECKSUM_COV_SET_SIZE + gzz + 1;
+                    graph_add_edge(&s->graph,u,v,weight);
+                    printf("Add edge:%d,%d,%d\n",u,v,weight);
+                }
+            }
+            
+    
+            //inner edges
+            for (gk = 0;gk < PREDICT_SCOPE - 1;++gk) {
+                for (gb = 0; gb < BUFFER_SIZE_SET_SIZE; ++gb) {
+                    for (gz = 0; gz < CHECKSUM_COV_SET_SIZE; ++gz) {
+                        q1 = BufferSizeSet[gb] * ChecksumCoverageSet[gz];
+                        for (gbb = 0; gbb < BUFFER_SIZE_SET_SIZE; ++gbb) {
+                            for (gzz = 0; gzz < CHECKSUM_COV_SET_SIZE; ++gzz) {
+                                q2 = BufferSizeSet[gbb] * ChecksumCoverageSet[gzz];
+                                weight = q2 - lambda*abs(q2-q1);
+                                u = 1 + gk * BUFFER_SIZE_SET_SIZE * CHECKSUM_COV_SET_SIZE + gb * CHECKSUM_COV_SET_SIZE + gz;
+                                v = 1 + (gk+1) * BUFFER_SIZE_SET_SIZE * CHECKSUM_COV_SET_SIZE + gbb * CHECKSUM_COV_SET_SIZE + gzz;
+                                graph_add_edge(&s->graph,u,v,weight);
+                                printf("Add edge:%d,%d,%d\n",u,v,weight);
+                            }
+                        }
+                    }
+                }
+            }
+            
             //run the longest path algorithm
-            nextMove = longestPath(s->graph, 0, s->dist, s->pre);
-            nextNode = s->graph.vnodes[nextMove];
+            //TODO:bug in longestPath, core dump
+            //nextMove = longestPath(s->graph, 0, s->dist, s->pre);
+            if (nextMove <= 0) {
+                printf("Failed to run longestPath...\n\n\n\n\n\n\n\n");
+                nextMove = 0;
+            }
+	        nextNode = s->graph.vnodes[nextMove];
             //get the buffer size, chekcum coverage and protocol of next GOP
             bn = nextNode.b;
             zn = nextNode.z;
             un = nextNode.z == FULL_COV;
+            printf("Next Move Params are %d...\n\n\n\n\n\n\n\n",bn);
             //take the action and use Path B to cover the switch cost
-            //switch the buffer size
+            //TODO:switch the buffer size
+            //TODO:this switch leads to lots of loss, which is the major cause of poor quality
             if (setsockopt(s->udp_fd, SOL_SOCKET, SO_RCVBUF, &bn, sizeof(bn)) < 0) {
 				ff_log_net_error(h, AV_LOG_WARNING, "setsockopt(SO_RECVBUF)");
 			}
@@ -900,25 +959,30 @@ end:
 /* return non zero if error */
 static int udp_open(URLContext *h, const char *uri, int flags)
 {
-    char hostname[1024], localaddr[1024] = "", localaddr2[1024] = "";
+    char hostname[1024], localaddr[1024] = "";
     int port, udp_fd = -1, udp_fd2 = -1, tmp, bind_ret = -1, dscp = -1;
-    UDPContext *s = h->priv_data;
-    s->pkt_count = 0;
     int is_output;
     const char *p;
     char buf[256];
     struct sockaddr_storage my_addr;
     struct sockaddr_storage my_addr2;
     socklen_t len,len2;
-    int bs[MAX_VERTEX_NUMBER+1], zs[MAX_VERTEX_NUMBER+1], ks[MAX_VERTEX_NUMBER+1];
+    int bs[MAX_VERTEX_NUMBER], zs[MAX_VERTEX_NUMBER], ks[MAX_VERTEX_NUMBER];
     int gk,gb,gz;
+    int ret;
+    int ret2;
+    char sbuf[1024];
+       
 
-    memset(bs, 0, sizeof(bs));
-    memset(zs, 0, sizeof(zs));
-    memset(ks, 0, sizeof(ks));
+    UDPContext *s = h->priv_data;
+    s->pkt_count = 0;
+    
+    memset(bs, 0, sizeof(int) * (MAX_VERTEX_NUMBER));
+    memset(zs, 0, sizeof(int) * (MAX_VERTEX_NUMBER));
+    memset(ks, 0, sizeof(int) * (MAX_VERTEX_NUMBER));
 
     //the step start from 1, step 0 is the auxilary source point
-    for (gk; gk < PREDICT_SCOPE; ++gk){
+    for (gk = 0; gk < PREDICT_SCOPE; ++gk){
         for (gb = 0; gb < BUFFER_SIZE_SET_SIZE; ++gb) {
             for (gz = 0; gz < CHECKSUM_COV_SET_SIZE; ++gz) {
                 //a for the auxilary source vertex
@@ -936,6 +1000,8 @@ static int udp_open(URLContext *h, const char *uri, int flags)
         GraphNode node = s->graph.vnodes[gk];
         printf("%d,%d,%d\n",node.b, node.z, node.k);
     }
+    
+    s->qoe_cur = 10;
 
     h->is_streamed = 1;
 
@@ -1123,18 +1189,28 @@ static int udp_open(URLContext *h, const char *uri, int flags)
     /* bind to the local address if not multicast or if the multicast
      * bind failed */
     /* the bind is needed to give a port to the socket now */
+    len = sizeof(my_addr);
+    len2 = sizeof(my_addr2);
     if (bind_ret < 0 && bind(udp_fd,(struct sockaddr *)&my_addr, len) < 0) {
         ff_log_net_error(h, AV_LOG_ERROR, "bind failed");
         goto fail;
     }
-    udp_set_url(h, &my_addr2, hostname, s->local_port2);
-    if (bind_ret < 0 && bind(udp_fd2,(struct sockaddr *)&my_addr2, len) < 0) {
-		ff_log_net_error(h, AV_LOG_ERROR, "bind path 2 failed");
-		goto fail;
-	}
+    printf("bind used %d.\n\n\n\n\n\n", bind_ret);
+    memcpy(&my_addr2, &my_addr, sizeof(my_addr));
+    //TODO:The bug is that this function udp_hostname is wrong
+    ret = udp_hostname(&my_addr, len, sbuf);
+    printf("%s\n", sbuf);
+    if (ret == 0) {
+        udp_set_url(h, &my_addr2, "192.168.0.111", 9000);
+        printf("%s\n", sbuf);
+    }
+    
+    
+    if (bind_ret < 0 && bind(udp_fd2,(struct sockaddr *)&my_addr2, len2) < 0) {
+	ff_log_net_error(h, AV_LOG_ERROR, "bind path 2 failed");
+	goto fail;
+    }
 
-    len = sizeof(my_addr);
-    len2 = sizeof(my_addr2);
     getsockname(udp_fd, (struct sockaddr *)&my_addr, &len);
     getsockname(udp_fd2, (struct sockaddr *)&my_addr2, &len2);
     s->local_port = udp_port(&my_addr, len);
@@ -1220,8 +1296,6 @@ static int udp_open(URLContext *h, const char *uri, int flags)
     }
 
     if ((!is_output && s->circular_buffer_size) || (is_output && s->bitrate && s->circular_buffer_size)) {
-        int ret;
-
         /* start the task going */
         s->fifo = av_fifo_alloc(s->circular_buffer_size);
         s->recv_buffer = av_fifo_alloc(s->recv_buffer_size);
@@ -1230,7 +1304,7 @@ static int udp_open(URLContext *h, const char *uri, int flags)
 			exit(1);
 		}
 
-		int ret2;
+		
 		ret2 = pthread_mutex_init(&s->rb_mutex, NULL);
 		if (ret2 != 0) {
 		   av_log(h, AV_LOG_ERROR, "pthread_mutex_init failed : %s\n", strerror(ret2));
@@ -1409,14 +1483,14 @@ static int udp_write(URLContext *h, const uint8_t *buf, int size)
     }
     if (!s->is_connected) {
    	        //int nal_type = buf[4] & 31;
-    		printf("%x,%x,%x,%x,%x,%x\n",buf[0],buf[1],buf[2],buf[3],buf[4],buf[5]);
+    		//printf("%x,%x,%x,%x,%x,%x\n",buf[0],buf[1],buf[2],buf[3],buf[4],buf[5]);
 			ret = sendto (s->udp_fd, buf, size, 0,
 									  (struct sockaddr *) &s->dest_addr,
 									  s->dest_addr_len);
 
 			//memcpy(s->dest_addr2, s->dest_addr, s->dest_addr_len);
 			//(struct sockaddr_in *)s->dest_addr2.sin_port = htons(9000);
-			udp_set_url(h,&s->dest_addr2,"127.0.0.1",9000);
+			//udp_set_url(h,&s->dest_addr2,"mac",9000);
 
 			ret = sendto (s->udp_fd2, buf, size, 0,
 									  (struct sockaddr *)&s->dest_addr2,
